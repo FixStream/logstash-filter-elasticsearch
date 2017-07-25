@@ -1,4 +1,4 @@
-## 3.1.4
+## 3.1.99
   - added total_hits (boolean) flag to return the complete "hits" array including the _index, _type, _id, _score and _source for the matching query
 
 ## 3.1.3
