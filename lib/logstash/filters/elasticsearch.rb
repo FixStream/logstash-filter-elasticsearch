@@ -186,9 +186,13 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
         if !results['hits']['hits'].empty?
           set = []
           results["hits"]["hits"].to_a.each do |doc|
-            set << doc["_source"][old_key]
+            if doc["_source"][old_key] != nil
+              set << doc["_source"][old_key]
+            end
           end
-          event.set(new_key, set.count > 1 ? set : set.first)
+          if !set.empty?
+            event.set(new_key, set.count > 1 ? set : set.first)
+          end
         end
       end
 
