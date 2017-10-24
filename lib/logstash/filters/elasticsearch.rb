@@ -3,6 +3,7 @@ require "logstash/filters/base"
 require "logstash/namespace"
 require_relative "elasticsearch/client"
 require "logstash/json"
+java_import "java.util.concurrent.ConcurrentHashMap"
 
 # .Compatibility Note
 # [NOTE]
@@ -87,7 +88,8 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
   # List of elasticsearch hosts to use for querying.
   config :hosts, :validate => :array,  :default => [ "localhost:9200" ]
   
-  # Comma-delimited list of index names to search; use `_all` or empty string to perform the operation on all indices
+  # Comma-delimited list of index names to search; use `_all` or empty string to perform the operation on all indices.
+  # Field substitution (e.g. `index-name-%{date_field}`) is available
   config :index, :validate => :string, :default => ""
 
   # Elasticsearch query string. Read the Elasticsearch query string documentation.
@@ -124,15 +126,14 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
 
   # Tags the event on failure to look up geo information. This can be used in later analysis.
   config :tag_on_failure, :validate => :array, :default => ["_elasticsearch_lookup_failure"]
+    
+  # total_hits (full data set)
+    config :total_hits, :validate => :boolean, :default => false
+
+  attr_reader :clients_pool
 
   def register
-    options = {
-      :ssl => @ssl,
-      :hosts => @hosts,
-      :ca_file => @ca_file,
-      :logger => @logger
-    }
-    @client = LogStash::Filters::ElasticsearchClient.new(@user, @password, options)
+    @clients_pool = java.util.concurrent.ConcurrentHashMap.new
 
     #Load query if it exists
     if @query_template
@@ -148,7 +149,7 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
   def filter(event)
     begin
 
-      params = {:index => @index }
+      params = {:index => event.sprintf(@index) }
 
       if @query_dsl
         query = LogStash::Json.load(event.sprintf(@query_dsl))
@@ -163,6 +164,23 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
       @logger.debug("Querying elasticsearch for lookup", :params => params)
 
       results = @client.search(params)
+
+      if (@total_hits == true)
+        if !results['hits']['hits'].empty?
+          set = []
+          results["hits"]["hits"].to_a.each do |doc|
+            dataset = {}
+            dataset["_index"] = doc["_index"]
+            dataset["_type"] = doc["_type"]
+            dataset["_id"] = doc["_id"]
+            dataset["_source"] = doc["_source"]
+            set << dataset
+          end
+          event.set("filter_count", set.count)
+          event.set("filter_hits", set)
+        end
+      end #@total_hits == true
+
       @fields.each do |old_key, new_key|
         if !results['hits']['hits'].empty?
           set = []
@@ -172,10 +190,29 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
           event.set(new_key, set.count > 1 ? set : set.first)
         end
       end
-    rescue => e
+
+      rescue => e
       @logger.warn("Failed to query elasticsearch for previous event", :index => @index, :query => query, :event => event, :error => e)
       @tag_on_failure.each{|tag| event.tag(tag)}
     end
     filter_matched(event)
   end # def filter
+
+  private
+  def client_options
+    {
+      :ssl => @ssl,
+      :hosts => @hosts,
+      :ca_file => @ca_file,
+      :logger => @logger
+    }
+  end
+
+  def new_client
+    LogStash::Filters::ElasticsearchClient.new(@user, @password, client_options)
+  end
+
+  def get_client
+    @clients_pool.computeIfAbsent(Thread.current, lambda { |x| new_client })
+  end
 end #class LogStash::Filters::Elasticsearch
