@@ -10,6 +10,9 @@
 ## 3.1.6
   - Fix some documentation issues
 
+## 3.1.99
+  - added total_hits (boolean) flag to return the complete "hits" array including the _index, _type, _id, _score and _source for the matching query
+
 ## 3.1.5
  - Docs: Fix broken link to Logstash docs.
  - Support ca_file setting when using https uri in hosts parameter
