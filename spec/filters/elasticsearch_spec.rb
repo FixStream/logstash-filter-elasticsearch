@@ -9,6 +9,9 @@ describe LogStash::Filters::Elasticsearch do
   context "registration" do
 
     let(:plugin) { LogStash::Plugin.lookup("filter", "elasticsearch").new({}) }
+    before do
+      allow(plugin).to receive(:test_connection!)
+    end
 
     it "should not raise an exception" do
       expect {plugin.register}.to_not raise_error
@@ -37,6 +40,7 @@ describe LogStash::Filters::Elasticsearch do
     before(:each) do
       allow(LogStash::Filters::ElasticsearchClient).to receive(:new).and_return(client)
       allow(client).to receive(:search).and_return(response)
+      allow(plugin).to receive(:test_connection!)
       plugin.register
     end
 
@@ -109,6 +113,26 @@ describe LogStash::Filters::Elasticsearch do
       end
     end
 
+    context 'when Elasticsearch 7.x gives us a totals object instead of an integer' do
+      let(:config) do
+        {
+            "hosts" => ["localhost:9200"],
+            "query" => "response: 404",
+            "fields" => { "response" => "code" },
+            "result_size" => 10
+        }
+      end
+
+      let(:response) do
+        LogStash::Json.load(File.read(File.join(File.dirname(__FILE__), "fixtures", "elasticsearch_7.x_hits_total_as_object.json")))
+      end
+
+      it "should enhance the current event with new data" do
+        plugin.filter(event)
+        expect(event.get("[@metadata][total_hits]")).to eq(13476)
+      end
+    end
+
     context "if something wrong happen during connection" do
 
       before(:each) do
@@ -124,13 +148,77 @@ describe LogStash::Filters::Elasticsearch do
       end
     end
 
+    # Tagging test for positive results
+    context "Tagging should occur if query returns results" do
+      let(:config) do
+        {
+          "index" => "foo*",
+          "hosts" => ["localhost:9200"],
+          "query" => "response: 404",
+          "add_tag" => ["tagged"]
+        }
+      end
+
+      let(:response) do
+        LogStash::Json.load(File.read(File.join(File.dirname(__FILE__), "fixtures", "request_x_10.json")))
+      end
+
+      it "should tag the current event if results returned" do
+        plugin.filter(event)
+        expect(event.to_hash["tags"]).to include("tagged")
+      end
+    end
+
+    context "an aggregation search with size 0 that matches" do
+      let(:config) do
+        {
+          "index" => "foo*",
+          "hosts" => ["localhost:9200"],
+          "query" => "response: 404",
+          "add_tag" => ["tagged"],
+          "result_size" => 0,
+          "aggregation_fields" => { "bytes_avg" => "bytes_avg_ls_field" }
+        }
+      end
+
+      let(:response) do
+        LogStash::Json.load(File.read(File.join(File.dirname(__FILE__), "fixtures", "request_size0_agg.json")))
+      end
+
+      it "should tag the current event" do
+        plugin.filter(event)
+        expect(event.get("tags")).to include("tagged")
+        expect(event.get("bytes_avg_ls_field")["value"]).to eq(294)
+      end
+    end
+
+    # Tagging test for negative results
+    context "Tagging should not occur if query has no results" do
+      let(:config) do
+        {
+          "index" => "foo*",
+          "hosts" => ["localhost:9200"],
+          "query" => "response: 404",
+          "add_tag" => ["tagged"]
+        }
+      end
+
+      let(:response) do
+        LogStash::Json.load(File.read(File.join(File.dirname(__FILE__), "fixtures", "request_error.json")))
+      end
+
+      it "should not tag the current event" do
+        plugin.filter(event)
+        expect(event.to_hash["tags"]).to_not include("tagged")
+      end
+    end
     context "testing a simple query template" do
       let(:config) do
         {
-            "hosts" => ["localhost:9200"],
-            "query_template" => File.join(File.dirname(__FILE__), "fixtures", "query_template.json"),
-            "fields" => { "response" => "code" },
-            "result_size" => 1
+          "hosts" => ["localhost:9200"],
+          "query_template" => File.join(File.dirname(__FILE__), "fixtures", "query_template.json"),
+          "fields" => { "response" => "code" },
+          "result_size" => 1
         }
       end
 

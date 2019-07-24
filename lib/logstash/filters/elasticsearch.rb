@@ -71,9 +71,11 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
       @query_dsl = file.read
     end
 
+    test_connection!
   end # def register
 
   def filter(event)
+    matched = false
     begin
       params = {:index => event.sprintf(@index) }
 
@@ -92,8 +94,11 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
       results = get_client.search(params)
       raise "Elasticsearch query error: #{results["_shards"]["failures"]}" if results["_shards"].include? "failures"
 
+      event.set("[@metadata][total_hits]", extract_total_from_hits(results['hits']))
+
       resultsHits = results["hits"]["hits"]
       if !resultsHits.nil? && !resultsHits.empty?
+        matched = true
         @fields.each do |old_key, new_key|
           old_key_path = extract_path(old_key)
           set = resultsHits.map do |doc|
@@ -112,16 +117,24 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
 
       resultsAggs = results["aggregations"]
       if !resultsAggs.nil? && !resultsAggs.empty?
+        matched = true
         @aggregation_fields.each do |agg_name, ls_field|
           event.set(ls_field, resultsAggs[agg_name])
         end
       end
 
     rescue => e
-      @logger.warn("Failed to query elasticsearch for previous event", :index => @index, :query => query, :event => event, :error => e)
+      if @logger.trace?
+        @logger.warn("Failed to query elasticsearch for previous event", :index => @index, :query => query, :event => event.to_hash, :error => e.message, :backtrace => e.backtrace)
+      elsif @logger.debug?
+        @logger.warn("Failed to query elasticsearch for previous event", :index => @index, :error => e.message, :backtrace => e.backtrace)
+      else
+        @logger.warn("Failed to query elasticsearch for previous event", :index => @index, :error => e.message)
+      end
       @tag_on_failure.each{|tag| event.tag(tag)}
+    else
+      filter_matched(event) if matched
     end
-    filter_matched(event)
   end # def filter
 
   private
@@ -158,5 +171,24 @@ class LogStash::Filters::Elasticsearch < LogStash::Filters::Base
       break unless memo.include?(old_key_fragment)
       memo[old_key_fragment]
     end
+  end
+
+  # Given a "hits" object from an Elasticsearch response, return the total number of hits in
+  # the result set.
+  # @param hits [Hash{String=>Object}]
+  # @return [Integer]
+  def extract_total_from_hits(hits)
+    total = hits['total']
+
+    # Elasticsearch 7.x produces an object containing `value` and `relation` in order
+    # to enable unambiguous reporting when the total is only a lower bound; if we get
+    # an object back, return its `value`.
+    return total['value'] if total.kind_of?(Hash)
+
+    total
+  end
+
+  def test_connection!
+    get_client.client.ping
   end
 end #class LogStash::Filters::Elasticsearch

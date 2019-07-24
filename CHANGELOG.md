@@ -1,3 +1,21 @@
+## 3.6.0
+  - Add support for extracting hits total from Elasticsearch 7.x responses
+
+## 3.5.0
+  - Added connection check during register to avoid failures during processing
+  - Changed Elasticsearch Client transport to use Manticore
+  - Changed amount of logging details during connection failure
+
+## 3.4.0
+  - Adds `[@metadata][total_hits]` with total hits returned from the query ([#106](https://github.com/logstash-plugins/logstash-filter-elasticsearch/pull/106))
+  - Improves error logging to fully inspect caught exceptions ([#105](https://github.com/logstash-plugins/logstash-filter-elasticsearch/pull/105))
+
+## 3.3.1
+  - Fix: The filter now only calls `filter_matched` on events that actually matched.
+    This fixes issues where all events would have success-related actions happened
+    when no match had actually happened (`add_tag`, `add_field`, `remove_tag`,
+    `remove_field`)
+
 ## 3.3.0
   - Enhancement : if elasticsearch response contains any shard failure, then `tag_on_failure` tags are added to Logstash event
   - Enhancement : add support for nested fields
